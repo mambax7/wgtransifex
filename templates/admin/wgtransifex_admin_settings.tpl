@@ -6,7 +6,8 @@
         <thead>
             <tr class='head'>
                 <th class="center"><{$smarty.const._AM_WGTRANSIFEX_SETTING_ID}></th>
-                <th class="center"><{$smarty.const._AM_WGTRANSIFEX_SETTING_USERNAME}></th>
+                <th class="center"><{$smarty.const._AM_WGTRANSIFEX_SETTING_ORGANIZATION}></th>
+                <th class="center"><{$smarty.const._AM_WGTRANSIFEX_SETTING_TOKEN_MASKED}></th>
                 <th class="center"><{$smarty.const._AM_WGTRANSIFEX_SETTING_PRIMARY}></th>
                 <th class="center"><{$smarty.const._AM_WGTRANSIFEX_SETTING_REQUEST}></th>
                 <th class="center"><{$smarty.const._AM_WGTRANSIFEX_SETTING_DATE}></th>
@@ -19,7 +20,8 @@
             <{foreach item=setting from=$settings_list}>
             <tr class='<{cycle values='odd, even'}>'>
                 <td class='center'><{$setting.id}></td>
-                <td class='center'><{$setting.username}></td>
+                <td class='center'><{$setting.organization}></td>
+                <td class='center'><{$setting.token_masked}></td>
                 <td class='center'><{$setting.primary}></td>
                 <td class='center'><{$setting.request}></td>
                 <td class='center'><{$setting.date}></td>

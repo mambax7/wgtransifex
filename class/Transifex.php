@@ -72,8 +72,7 @@ class Transifex
         $txprojects = [];
         //request data from transifex
         $transifexLib = new \XoopsModules\Wgtransifex\TransifexLib();
-        $transifexLib->user = $setting['user'];
-        $transifexLib->password = $setting['pwd'];
+        $transifexLib->configure($setting['organization'], $setting['token']);
         $items = $transifexLib->getProjects();
         foreach ($items as $item) {
             $txprojects[] = $item['slug'];
@@ -187,8 +186,7 @@ class Transifex
         $resourcesHandler->updateAll('res_status', Constants::STATUS_OUTDATED, $crResources, true);
         //request data from transifex
         $transifexLib = new \XoopsModules\Wgtransifex\TransifexLib();
-        $transifexLib->user = $setting['user'];
-        $transifexLib->password = $setting['pwd'];
+        $transifexLib->configure($setting['organization'], $setting['token']);
         $items = $transifexLib->getResources($project);
         foreach ($items as $item) {
             $resourcesObj = null;
@@ -255,8 +253,8 @@ class Transifex
         $setting = $this->getSetting();
 
         $transifexLib = new \XoopsModules\Wgtransifex\TransifexLib();
-        $transifexLib->user = $setting['user'];
-        $transifexLib->password = $setting['pwd'];
+        $transifexLib->configure($setting['organization'], $setting['token']);
+
         return $transifexLib->getLanguages($proSlug);
     }
 
@@ -297,8 +295,7 @@ class Transifex
         if ($resourcesCount > 0) {
             //request data from transifex
             $transifexLib = new \XoopsModules\Wgtransifex\TransifexLib();
-            $transifexLib->user = $setting['user'];
-            $transifexLib->password = $setting['pwd'];
+            $transifexLib->configure($setting['organization'], $setting['token']);
             $resourcesAll = $resourcesHandler->getAll($crResources);
             foreach (\array_keys($resourcesAll) as $i) {
                 $resId = $resourcesAll[$i]->getVar('res_id');
@@ -390,8 +387,7 @@ class Transifex
             $limit = 100;
             //request data from transifex
             $transifexLib = new \XoopsModules\Wgtransifex\TransifexLib();
-            $transifexLib->user = $setting['user'];
-            $transifexLib->password = $setting['pwd'];
+            $transifexLib->configure($setting['organization'], $setting['token']);
             for ($start = 0; $start <= $translationsCount; $start+=$limit) {
                 $crTranslations = new \CriteriaCompo();
                 $crTranslations->setStart($start);
@@ -486,8 +482,7 @@ class Transifex
 
         //request data from transifex
         $transifexLib = new TransifexLib();
-        $transifexLib->user = $setting['user'];
-        $transifexLib->password = $setting['pwd'];
+        $transifexLib->configure($setting['organization'], $setting['token']);
         $project = $projectsObj->getVar('pro_slug');
 
         // read resources data
@@ -568,6 +563,10 @@ class Transifex
 
         if (0 == \count($setting)) {
             \redirect_header('settings.php', 3, \_AM_WGTRANSIFEX_THEREARENT_SETTINGS);
+        }
+
+        if (empty($setting['organization']) || empty($setting['token'])) {
+            \redirect_header('settings.php', 3, \_AM_WGTRANSIFEX_SETTING_INCOMPLETE);
         }
 
         return $setting;

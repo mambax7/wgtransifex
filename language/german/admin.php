@@ -146,8 +146,12 @@ require_once __DIR__ . '/main.php';
 \define('_AM_WGTRANSIFEX_SETTING_EDIT', 'Einstellung bearbeiten');
 // Elements of Setting
 \define('_AM_WGTRANSIFEX_SETTING_ID', 'Id');
-\define('_AM_WGTRANSIFEX_SETTING_USERNAME', 'Benutzername');
-\define('_AM_WGTRANSIFEX_SETTING_PASSWORD', 'Passwort');
+\define('_AM_WGTRANSIFEX_SETTING_ORGANIZATION', 'Organisations-Slug');
+\define('_AM_WGTRANSIFEX_SETTING_USERNAME', _AM_WGTRANSIFEX_SETTING_ORGANIZATION);
+\define('_AM_WGTRANSIFEX_SETTING_TOKEN', 'API-Token');
+\define('_AM_WGTRANSIFEX_SETTING_PASSWORD', _AM_WGTRANSIFEX_SETTING_TOKEN);
+\define('_AM_WGTRANSIFEX_SETTING_TOKEN_MASKED', 'API-Token (verdeckt)');
+\define('_AM_WGTRANSIFEX_SETTING_INCOMPLETE', 'Bitte zuerst einen Transifex-Organisations-Slug und ein API-Token in den Einstellungen hinterlegen.');
 \define('_AM_WGTRANSIFEX_SETTING_OPTIONS', 'Optionen');
 \define('_AM_WGTRANSIFEX_SETTING_DATE', 'Datum');
 \define('_AM_WGTRANSIFEX_SETTING_SUBMITTER', 'Einsender');
