@@ -14,26 +14,23 @@ namespace XoopsModules\Wgtransifex;
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  */
 /**
- * @copyright    XOOPS Project https://xoops.org/
- * @license      GNU GPL 2 or later (http://www.gnu.org/licenses/gpl-2.0.html)
- * @since
- * @author       Goffy - XOOPS Development Team
- */
-
-/**
  * Transifex API wrapper class.
  */
 class TransifexLib
 {
-    public const BASE_URL = 'https://www.transifex.com/api/2/';
+    public const BASE_URL = 'https://rest.api.transifex.com/';
+    private const HEADER_JSON_API = 'application/vnd.api+json';
+
     /**
      * @var string
      */
-    public $user;
+    private $organization = '';
+
     /**
      * @var string
      */
-    public $password;
+    private $token = '';
+
     /**
      * Verbose debugging for curl (when putting)
      * @var bool
@@ -41,387 +38,668 @@ class TransifexLib
     public $debug = false;
 
     /**
-     * TransifexLib::__construct()
+     * @var callable
+     */
+    private $httpClient;
+
+    /**
+     * TransifexLib constructor.
      */
     public function __construct()
     {
+        $this->httpClient = [$this, 'defaultHttpClient'];
     }
 
     /**
-     * TransifexLib::getProject()
-     *
+     * Configure the Transifex credentials.
+     */
+    public function configure(string $organization, string $token): void
+    {
+        $this->organization = \trim($organization);
+        $this->token = \trim($token);
+    }
+
+    /**
+     * Inject a custom HTTP client (mainly for unit testing).
+     */
+    public function setHttpClient(callable $httpClient): void
+    {
+        $this->httpClient = $httpClient;
+    }
+
+    /**
      * @return array
      */
     public function getProjects()
     {
-        $url = static::BASE_URL . 'projects';
+        $this->ensureConfigured();
 
-        return $this->_get($url);
+        $projects = [];
+        $path = 'projects';
+        $query = [
+            'filter[organization]' => $this->buildOrganizationId(),
+            'page[size]' => 200,
+        ];
+
+        do {
+            $response = $this->request('GET', $path, $query);
+            foreach ($response['data'] ?? [] as $project) {
+                $projects[] = $this->normalizeProjectSummary($project);
+            }
+            $next = $this->parseNextLink($response['links']['next'] ?? null);
+            if ($next) {
+                $path = $next['path'];
+                $query = $next['query'];
+            }
+        } while ($next);
+
+        return $projects;
     }
 
     /**
-     * TransifexLib::getProject()
-     *
      * @param      $project
      * @param bool $details
      * @param bool $skipMissing
-     * @return array
+     *
+     * @return array|bool
      */
     public function getProject($project, $details = false, $skipMissing = false)
     {
-        $url = static::BASE_URL . 'project/' . $project . '/';
-        if ($details) {
-            $url .= '?details';
+        $this->ensureConfigured();
+        $projectSlug = (string)$project;
+        $projectId = $this->buildProjectId($projectSlug);
+
+        try {
+            $response = $this->request('GET', 'projects/' . \rawurlencode($projectId));
+        } catch (\RuntimeException $exception) {
+            if ($skipMissing && 404 === $exception->getCode()) {
+                return false;
+            }
+
+            throw $exception;
         }
 
-        return $this->_get($url, false, $skipMissing);
+        $data = $response['data'] ?? [];
+        $attributes = $data['attributes'] ?? [];
+        $result = [
+            'slug' => $attributes['slug'] ?? $projectSlug,
+            'name' => $attributes['name'] ?? '',
+            'description' => $attributes['description'] ?? '',
+            'archived' => (bool)($attributes['archived'] ?? false),
+            'source_language_code' => $attributes['source_language_code'] ?? '',
+            'last_updated' => $attributes['datetime_modified'] ?? null,
+            'teams' => $this->extractProjectTeams($data),
+            'resources' => [],
+        ];
+
+        if ($details) {
+            $result['resources'] = $this->getResources($projectSlug);
+        }
+
+        return $result;
     }
 
     /**
-     * TransifexLib::getResources()
-     *
      * @param $project
+     *
      * @return array
      */
     public function getResources($project)
     {
-        $url = static::BASE_URL . 'project/' . $project . '/resources/';
+        $this->ensureConfigured();
+        $projectSlug = (string)$project;
+        $resources = [];
+        $path = 'resources';
+        $query = [
+            'filter[project]' => $this->buildProjectId($projectSlug),
+            'page[size]' => 200,
+        ];
 
-        return $this->_get($url);
+        do {
+            $response = $this->request('GET', $path, $query);
+            foreach ($response['data'] ?? [] as $item) {
+                $resources[] = $this->normalizeResource($item, $projectSlug);
+            }
+            $next = $this->parseNextLink($response['links']['next'] ?? null);
+            if ($next) {
+                $path = $next['path'];
+                $query = $next['query'];
+            }
+        } while ($next);
+
+        return $resources;
     }
 
     /**
-     * TransifexLib::getResource()
-     *
      * @param       $project
      * @param mixed $resource
+     *
      * @return array
      */
     public function getResource($project, $resource)
     {
-        if ($resource) {
-            $resource .= '/';
-        }
-        $url = static::BASE_URL . 'project/' . $project . '/resource/' . $resource;
+        $this->ensureConfigured();
+        $projectSlug = (string)$project;
+        $resourceSlug = (string)$resource;
+        $resourceId = $this->buildResourceId($projectSlug, $resourceSlug);
 
-        return $this->_get($url);
+        $response = $this->request('GET', 'resources/' . \rawurlencode($resourceId));
+
+        return $this->normalizeResource($response['data'] ?? [], $projectSlug);
     }
 
     /**
-     * TransifexLib::checkResource()
-     *
      * @param       $project
      * @param mixed $resource
-     * @return array
+     *
+     * @return bool
      */
     public function checkResource($project, $resource)
     {
-        if ($resource) {
-            $resource .= '/';
-        }
-        $url = static::BASE_URL . 'project/' . $project . '/resource/' . $resource;
+        try {
+            $this->getResource($project, $resource);
+        } catch (\RuntimeException $exception) {
+            if (404 === $exception->getCode()) {
+                return false;
+            }
 
-        return $this->_get($url, true);
+            throw $exception;
+        }
+
+        return true;
     }
 
     /**
-     * TransifexLib::getLanguages()
-     * Only the project owner or the project maintainers can perform this action.
-     *
      * @param $project
+     *
      * @return array
      */
     public function getLanguages($project)
     {
-        $url = static::BASE_URL . 'project/' . $project . '/languages/';
+        $this->ensureConfigured();
+        $projectSlug = (string)$project;
+        $languages = [];
+        $path = 'project_languages';
+        $query = [
+            'filter[project]' => $this->buildProjectId($projectSlug),
+            'include' => 'language',
+            'page[size]' => 200,
+        ];
 
-        return $this->_get($url);
+        do {
+            $response = $this->request('GET', $path, $query);
+            $included = $this->indexIncluded($response['included'] ?? []);
+            foreach ($response['data'] ?? [] as $item) {
+                $languages[] = $this->normalizeProjectLanguage($item, $included);
+            }
+            $next = $this->parseNextLink($response['links']['next'] ?? null);
+            if ($next) {
+                $path = $next['path'];
+                $query = $next['query'];
+            }
+        } while ($next);
+
+        return $languages;
     }
 
     /**
-     * Only the project owner or the project maintainers can perform this action.
-     *
      * @param        $project
      * @param string $language
+     *
      * @return array
      */
     public function getLanguage($project, $language)
     {
-        $url = static::BASE_URL . 'project/' . $project . '/language/' . $language . '/?details';
+        $this->ensureConfigured();
 
-        return $this->_get($url);
+        return $this->getLanguageInfo($language);
     }
 
     /**
-     * TransifexLib::getLanguageInfo()
-     *
      * @param string $language
+     *
      * @return array
      */
     public function getLanguageInfo($language)
     {
-        $url = static::BASE_URL . 'language/' . $language . '/';
+        $this->ensureConfigured();
+        $languageId = $this->buildLanguageId((string)$language);
+        $response = $this->request('GET', 'languages/' . \rawurlencode($languageId));
 
-        return $this->_get($url);
+        return $response['data']['attributes'] ?? [];
     }
 
     /**
-     * TransifexLib::getTranslations()
-     *
      * @param        $project
      * @param string $resource
      * @param string $language
      * @param        $language_source
      * @param bool   $reviewedOnly
+     *
      * @return array
      */
     public function getTranslation($project, $resource, $language, $language_source, $reviewedOnly = false)
     {
-        if ($language == $language_source) {
-            $url = static::BASE_URL . 'project/' . $project . '/resource/' . $resource . '/content/';
+        $this->ensureConfigured();
+        $projectSlug = (string)$project;
+        $resourceSlug = (string)$resource;
+        $languageCode = (string)$language;
+
+        $query = [
+            'filter[resource]' => $this->buildResourceId($projectSlug, $resourceSlug),
+            'page[size]' => 1,
+        ];
+
+        if ($languageCode === (string)$language_source) {
+            $query['filter[is_source_language]'] = 'true';
         } else {
-            $url = static::BASE_URL . 'project/' . $project . '/resource/' . $resource . '/translation/' . $language . '/';
-        }
-        if ($reviewedOnly) {
-            $url .= '?mode=reviewed';
+            $query['filter[language]'] = $this->buildLanguageId($languageCode);
         }
 
-        return $this->_get($url);
+        if ($reviewedOnly) {
+            $query['filter[reviewed]'] = 'true';
+        }
+
+        $response = $this->request('GET', 'resource_translations', $query);
+        $data = $response['data'][0] ?? [];
+        $attributes = $data['attributes'] ?? [];
+        $content = $attributes['content'] ?? '';
+        if (isset($attributes['content_encoding']) && 'base64' === $attributes['content_encoding']) {
+            $decoded = \base64_decode($content, true);
+            if (false !== $decoded) {
+                $content = $decoded;
+            }
+        }
+
+        return [
+            'content' => $content,
+            'mimetype' => $attributes['content_type'] ?? 'text/plain',
+        ];
     }
 
     /**
-     * TransifexLib::getStats()
-     *
      * @param             $project
      * @param string      $resource
      * @param string|null $language
+     *
      * @return array
      */
     public function getStats($project, $resource, $language = null)
     {
-        if ($language) {
-            $language .= '/';
+        $this->ensureConfigured();
+        $projectSlug = (string)$project;
+        $resourceSlug = (string)$resource;
+        $query = [
+            'filter[project]' => $this->buildProjectId($projectSlug),
+            'filter[resource]' => $this->buildResourceId($projectSlug, $resourceSlug),
+            'page[size]' => 1,
+        ];
+        if (null !== $language) {
+            $query['filter[language]'] = $this->buildLanguageId((string)$language);
         }
-        $url = static::BASE_URL . 'project/' . $project . '/resource/' . $resource . '/stats/' . $language;
 
-        return $this->_get($url);
+        $response = $this->request('GET', 'resource_language_stats', $query);
+        $data = $response['data'][0]['attributes'] ?? [];
+
+        if (!\is_array($data) || 0 === \count($data)) {
+            return [];
+        }
+
+        $reviewedPercent = $data['reviewed_percent'] ?? ($data['reviewed_percentage'] ?? 0.0);
+        $completed = $data['completed_percent'] ?? ($data['translated_percent'] ?? 0.0);
+        $lastTranslator = $data['last_translator'] ?? ($data['last_updated_by'] ?? '');
+
+        return [
+            'proofread' => (int)($data['reviewed_strings'] ?? 0),
+            'proofread_percentage' => (float)$reviewedPercent,
+            'reviewed_percentage' => (float)$reviewedPercent,
+            'completed' => (float)$completed,
+            'untranslated_words' => (int)($data['untranslated_words'] ?? 0),
+            'last_commiter' => (string)$lastTranslator,
+            'reviewed' => (int)($data['reviewed_strings'] ?? 0),
+            'translated_entities' => (int)($data['translated_strings'] ?? 0),
+            'translated_words' => (int)($data['translated_words'] ?? 0),
+            'untranslated_entities' => (int)($data['untranslated_strings'] ?? 0),
+            'last_update' => $data['last_translation_at'] ?? ($data['datetime_modified'] ?? null),
+        ];
     }
 
     /**
-     * TransifexLib::putTranslations()
-     *
      * @param        $project
      * @param string $resource
      * @param string $language
      * @param string $file
-     * @return mixed
+     *
+     * @return array
      */
     public function putTranslation($project, $resource, $language, $file)
     {
-        $url = static::BASE_URL . 'project/' . $project . '/resource/' . $resource . '/translation/' . $language;
-        if (\function_exists('curl_file_create') && \function_exists('mime_content_type')) {
-            $body = ['file' => \curl_file_create($file, $this->_getMimeType($file), \pathinfo($file, \PATHINFO_BASENAME))];
-        } else {
-            $body = ['file' => '@' . $file];
-        }
+        $this->ensureConfigured();
+        $translationId = $this->buildTranslationId((string)$project, (string)$resource, (string)$language);
+        $body = [
+            'data' => [
+                'id' => $translationId,
+                'type' => 'resource_translations',
+                'attributes' => [
+                    'content' => $this->readFileForUpload($file),
+                    'content_encoding' => 'base64',
+                ],
+            ],
+        ];
 
-        try {
-            return $this->_post($url, $body, 'PUT');
-        } catch (\RuntimeException $e) {
-            /* Handling a very specific exception due to a Transifex bug */
-            // Exception is thrown maybe just because the file only has empty translations
-            if (false !== mb_strpos($e->getMessage(), "We're not able to extract any string from the file uploaded for language")) {
-                $catalog = I18n::loadPo($file);
-                unset($catalog['']);
-                if (\count($catalog)) {
-                    if (0 === \count(\array_filter($catalog))) {
-                        // PO file contains empty translations
-                        // In that case Transifex throws an error although its not.
-                        // Then we could just append one non empty translation to that file and send it again
-                        // But apart from successfully sending this file again, it wont affect the remote translations
-                        return [
-                            'strings_added' => 0,
-                            'strings_updated' => 0,
-                            'strings_delete' => 0,
-                        ];
-                    }
-                    throw new \RuntimeException(\sprintf('Could not extract any string from %s. Whereas file contains non-empty translation(s) for following key(s): %s.', $file, '"' . \implode('", "', \array_keys(\array_filter($catalog))) . '"'));
-                }
-                throw new \RuntimeException(\sprintf('Could not extract any string from %s. File seems empty.', $file));
-            }
-            throw $e;
-        }
+        return $this->request('PATCH', 'resource_translations/' . \rawurlencode($translationId), [], $body);
     }
 
     /**
-     * TransifexLib::putResource()
-     *
      * @param        $project
      * @param string $resource
      * @param string $file
-     * @return mixed
+     *
+     * @return array
      */
     public function putResource($project, $resource, $file)
     {
-        $url = static::BASE_URL . 'project/' . $project . '/resource/' . $resource . '/content';
-        if (\function_exists('curl_file_create')) {
-            $body = ['file' => \curl_file_create($file, $this->_getMimeType($file), \pathinfo($file, \PATHINFO_BASENAME))];
-        } else {
-            $body = ['file' => '@' . $file];
-        }
+        $this->ensureConfigured();
+        $resourceId = $this->buildResourceId((string)$project, (string)$resource);
+        $body = [
+            'data' => [
+                'id' => $resourceId,
+                'type' => 'resources',
+                'attributes' => [
+                    'content' => $this->readFileForUpload($file),
+                    'content_encoding' => 'base64',
+                ],
+            ],
+        ];
 
-        return $this->_post($url, $body, 'PUT');
+        return $this->request('PATCH', 'resources/' . \rawurlencode($resourceId), [], $body);
     }
 
     /**
-     * TransifexLib::createResource()
-     *
      * @param $project
      * @param $resource
      * @param $slug
      * @param $i18n_type
      * @param $file
-     * @return mixed
+     *
+     * @return array
      */
     public function createResource($project, $resource, $slug, $i18n_type, $file)
     {
-        $url = static::BASE_URL . 'project/' . $project . '/resources';
+        $this->ensureConfigured();
         $body = [
-            'name' => $resource,
-            'slug' => $slug,
-            'i18n_type' => $i18n_type,
+            'data' => [
+                'type' => 'resources',
+                'attributes' => [
+                    'name' => (string)$resource,
+                    'slug' => (string)$slug,
+                    'i18n_type' => (string)$i18n_type,
+                    'content' => $this->readFileForUpload($file),
+                    'content_encoding' => 'base64',
+                ],
+                'relationships' => [
+                    'project' => [
+                        'data' => [
+                            'id' => $this->buildProjectId((string)$project),
+                            'type' => 'projects',
+                        ],
+                    ],
+                ],
+            ],
         ];
-        if (\function_exists('curl_file_create')) {
-            $body['file'] = \curl_file_create($file, $this->_getMimeType($file), \pathinfo($file, \PATHINFO_BASENAME));
-        } else {
-            $body['file'] = '@' . $file;
-        }
 
-        return $this->_post($url, $body, 'POST', $resource);
+        return $this->request('POST', 'resources', [], $body);
     }
 
-    /**
-     * @param string $file
-     * @return string
-     */
-    protected function _getMimeType($file)
+    private function readFileForUpload(string $file): string
     {
-        if (!\function_exists('finfo_open')) {
-            if (!\function_exists('mime_content_type')) {
-                throw new InternalErrorException('At least one of finfo or \mime_content_type() needs to be available');
-            }
-
-            return \mime_content_type($file);
+        if (!\is_readable($file)) {
+            throw new \RuntimeException('File not readable: ' . $file);
         }
-        $finfo = \finfo_open(\FILEINFO_MIME);
+        $content = \file_get_contents($file);
+        if (false === $content) {
+            throw new \RuntimeException('Could not read file: ' . $file);
+        }
 
-        return \finfo_file($finfo, $file);
+        return \base64_encode($content);
     }
 
     /**
-     * TransifexLib::_get()
+     * @param string $method
+     * @param string $path
+     * @param array  $query
+     * @param array|null $body
      *
-     * @param string $url
-     * @param bool   $checkOnly
-     * @param bool   $skipMissing
-     * @throws \RuntimeException Exception.
-     * @return bool|array
+     * @return array
      */
-    protected function _get($url, $checkOnly = false, $skipMissing = false)
+    protected function request(string $method, string $path, array $query = [], ?array $body = null)
     {
-        $error = false;
+        $url = \rtrim(static::BASE_URL, '/') . '/' . \ltrim($path, '/');
+        if ($query) {
+            $url .= '?' . \http_build_query($query, '', '&', \PHP_QUERY_RFC3986);
+        }
+
+        $headers = [
+            'Accept: ' . self::HEADER_JSON_API,
+            'Authorization: Bearer ' . $this->token,
+        ];
+        $payload = null;
+        if (null !== $body) {
+            $payload = \json_encode($body);
+            if (false === $payload) {
+                throw new \RuntimeException('Unable to encode request body');
+            }
+            $headers[] = 'Content-Type: ' . self::HEADER_JSON_API;
+        }
+
+        $rawResponse = \call_user_func($this->httpClient, $method, $url, $headers, $payload, $this->debug);
+        $status = (int)($rawResponse['status'] ?? 0);
+        $responseBody = (string)($rawResponse['body'] ?? '');
+        $error = $rawResponse['error'] ?? null;
+
+        if ($status < 200 || $status >= 300) {
+            $message = $this->extractErrorMessage($responseBody) ?? ($error ?: 'Unexpected HTTP status: ' . $status);
+            throw new \RuntimeException($message, $status);
+        }
+
+        if ('' === \trim($responseBody)) {
+            return [];
+        }
+
+        $decoded = \json_decode($responseBody, true);
+        if (\JSON_ERROR_NONE !== \json_last_error()) {
+            throw new \RuntimeException('Unable to decode Transifex response: ' . \json_last_error_msg(), $status);
+        }
+
+        return $decoded;
+    }
+
+    /**
+     * Default HTTP client using cURL.
+     *
+     * @return array{status:int,body:string,error:?(string)}
+     */
+    private function defaultHttpClient(string $method, string $url, array $headers, ?string $payload, bool $debug): array
+    {
         $ch = \curl_init();
-        //set the url, number of POST vars, POST data
         \curl_setopt($ch, \CURLOPT_URL, $url);
-        \curl_setopt($ch, \CURLOPT_USERPWD, $this->user . ':' . $this->password);
-        \curl_setopt($ch, \CURLOPT_CUSTOMREQUEST, 'GET');
+        \curl_setopt($ch, \CURLOPT_CUSTOMREQUEST, $method);
         \curl_setopt($ch, \CURLOPT_RETURNTRANSFER, true);
         \curl_setopt($ch, \CURLOPT_CONNECTTIMEOUT, 25);
         \curl_setopt($ch, \CURLOPT_TIMEOUT, 25);
-        if ($this->debug) {
+        \curl_setopt($ch, \CURLOPT_HTTPHEADER, $headers);
+        if (null !== $payload) {
+            \curl_setopt($ch, \CURLOPT_POSTFIELDS, $payload);
+        }
+        if ($debug) {
             \curl_setopt($ch, \CURLOPT_VERBOSE, true);
         }
-        \curl_setopt($ch, \CURLOPT_SSL_VERIFYHOST, false);
-        \curl_setopt($ch, \CURLOPT_SSL_VERIFYPEER, false);
-        \curl_setopt($ch, \CURLOPT_POST, 1);
-        $result = \curl_exec($ch);
-        $info = \curl_getinfo($ch);
-        if (($errMsg = \curl_error($ch)) || !\in_array((int)$info['http_code'], [200, 201], true)) {
-            $error = true;
-        }
-        \curl_close($ch);
-        if ($checkOnly) {
-            return (false == $error);
-        }
-        if ($error) {
-            //catch common errors
-            switch ((int)$info['http_code']) {
-                case 401:
-                    throw new \RuntimeException('"' . \_AM_WGTRANSIFEX_READTX_ERROR_API_401 . '"');
-                    break;
-                case 403:
-                    if ($skipMissing) {
-                        return false;
-                    }
-                    throw new \RuntimeException('"' . \_AM_WGTRANSIFEX_READTX_ERROR_API_403 . '"');
-                    break;
-                case 404:
-                    if ($skipMissing) {
-                        return false;
-                        break;
-                    }
-                    throw new \RuntimeException('"' . \_AM_WGTRANSIFEX_READTX_ERROR_API_404 . '"');
-                    break;
-                case 405:
-                    throw new \RuntimeException('"' . \_AM_WGTRANSIFEX_READTX_ERROR_API_405 . '"');
-                    break;
-                case 0:
-                default:
-                    throw new \RuntimeException('"' . \_AM_WGTRANSIFEX_READTX_ERROR_API . $errMsg . '"');
-                    break;
-            }
-        }
 
-        return \json_decode($result, true);
+        $body = (string)\curl_exec($ch);
+        $status = (int)\curl_getinfo($ch, \CURLINFO_HTTP_CODE);
+        $error = \curl_error($ch);
+        \curl_close($ch);
+
+        return [
+            'status' => $status,
+            'body' => $body,
+            'error' => $error ?: null,
+        ];
     }
 
-    /**
-     * @param string $url
-     * @param mixed  $data
-     * @param string $requestType
-     * @param bool   $resource
-     * @throws \RuntimeException
-     * @return mixed
-     */
-    protected function _post($url, $data, $requestType = 'POST', $resource = false)
+    private function ensureConfigured(): void
     {
-        $error = false;
-        $ch = \curl_init();
-        //\curl_setopt($ch, CURLOPT_URL, Text::insert($url, $this->settings, ['before' => '{', 'after' => '}']));
-        \curl_setopt($ch, \CURLOPT_URL, $url);
-        \curl_setopt($ch, \CURLOPT_USERPWD, $this->user . ':' . $this->password);
-        \curl_setopt($ch, \CURLOPT_CUSTOMREQUEST, $requestType);
-        \curl_setopt($ch, \CURLOPT_POST, 1);
-        \curl_setopt($ch, \CURLOPT_POSTFIELDS, $data);
-        \curl_setopt($ch, \CURLOPT_RETURNTRANSFER, 1);
-        \curl_setopt($ch, \CURLOPT_SSL_VERIFYPEER, false);
-        if ($this->debug) {
-            \curl_setopt($ch, \CURLOPT_VERBOSE, true);
+        if ('' === $this->organization || '' === $this->token) {
+            throw new \RuntimeException('Transifex credentials are not configured');
         }
-        $result = \curl_exec($ch);
-        $info = \curl_getinfo($ch);
-        if (($errMsg = \curl_error($ch)) || !\in_array((int)$info['http_code'], [200, 201], true)) {
-            $error = true;
+    }
+
+    private function buildOrganizationId(): string
+    {
+        return 'o:' . $this->organization;
+    }
+
+    private function buildProjectId(string $projectSlug): string
+    {
+        return $this->buildOrganizationId() . ':p:' . $projectSlug;
+    }
+
+    private function buildResourceId(string $projectSlug, string $resourceSlug): string
+    {
+        return $this->buildProjectId($projectSlug) . ':r:' . $resourceSlug;
+    }
+
+    private function buildTranslationId(string $projectSlug, string $resourceSlug, string $languageCode): string
+    {
+        return $this->buildResourceId($projectSlug, $resourceSlug) . ':l:' . $languageCode;
+    }
+
+    private function buildLanguageId(string $language): string
+    {
+        return 'l:' . $language;
+    }
+
+    private function parseNextLink(?string $next): ?array
+    {
+        if (empty($next)) {
+            return null;
         }
-        \curl_close($ch);
-        if ($error && $resource) {
-            throw new \RuntimeException(\_AM_WGTRANSIFEX_READTX_ERROR_API . ': '. $resource . ' - '. $result);
-        } else {
-            if ($error) {
-                throw new \RuntimeException(\_AM_WGTRANSIFEX_READTX_ERROR_API . $errMsg);
+
+        $parts = \parse_url($next);
+        if (false === $parts || !isset($parts['path'])) {
+            return null;
+        }
+
+        $query = [];
+        if (!empty($parts['query'])) {
+            \parse_str($parts['query'], $query);
+        }
+
+        return [
+            'path' => \ltrim($parts['path'], '/'),
+            'query' => $query,
+        ];
+    }
+
+    private function extractErrorMessage(string $body): ?string
+    {
+        if ('' === \trim($body)) {
+            return null;
+        }
+
+        $decoded = \json_decode($body, true);
+        if (!\is_array($decoded)) {
+            return null;
+        }
+        if (isset($decoded['errors'][0]['detail'])) {
+            return (string)$decoded['errors'][0]['detail'];
+        }
+        if (isset($decoded['error']['message'])) {
+            return (string)$decoded['error']['message'];
+        }
+
+        return null;
+    }
+
+    private function normalizeProjectSummary(array $project): array
+    {
+        $attributes = $project['attributes'] ?? [];
+        $slug = $attributes['slug'] ?? $this->extractSlugFromId($project['id'] ?? '', 'p');
+
+        return [
+            'slug' => $slug,
+            'name' => $attributes['name'] ?? '',
+            'description' => $attributes['description'] ?? '',
+            'archived' => (bool)($attributes['archived'] ?? false),
+            'source_language_code' => $attributes['source_language_code'] ?? '',
+            'last_updated' => $attributes['datetime_modified'] ?? null,
+        ];
+    }
+
+    private function extractProjectTeams(array $projectData): array
+    {
+        $teams = $projectData['relationships']['teams']['data'] ?? [];
+
+        return \is_array($teams) ? $teams : [];
+    }
+
+    private function normalizeResource(array $resource, string $projectSlug): array
+    {
+        $attributes = $resource['attributes'] ?? [];
+
+        $sourceLanguage = $attributes['source_language_code'] ?? ($attributes['language_code'] ?? '');
+
+        return [
+            'slug' => $attributes['slug'] ?? $this->extractSlugFromId($resource['id'] ?? '', 'r'),
+            'name' => $attributes['name'] ?? '',
+            'i18n_type' => $attributes['i18n_type'] ?? '',
+            'priority' => (int)($attributes['priority'] ?? 0),
+            'source_language_code' => $sourceLanguage,
+            'categories' => $this->toArray($attributes['categories'] ?? []),
+            'metadata' => $this->toArray($attributes['metadata'] ?? []),
+            'project' => $projectSlug,
+        ];
+    }
+
+    private function normalizeProjectLanguage(array $item, array $included): array
+    {
+        $languageId = $item['relationships']['language']['data']['id'] ?? '';
+        $languageAttributes = $included[$languageId]['attributes'] ?? [];
+
+        return [
+            'code' => $languageAttributes['code'] ?? $this->extractSlugFromId($languageId, 'l'),
+            'name' => $languageAttributes['name'] ?? ($languageAttributes['local_name'] ?? ''),
+        ];
+    }
+
+    private function indexIncluded(array $included): array
+    {
+        $index = [];
+        foreach ($included as $item) {
+            if (isset($item['id'])) {
+                $index[$item['id']] = $item;
             }
         }
 
-        return \json_decode($result, true);
+        return $index;
+    }
+
+    private function extractSlugFromId(string $identifier, string $type): string
+    {
+        if ('' === $identifier) {
+            return '';
+        }
+        $pattern = '/' . \preg_quote($type, '/') . ':([^:]+)/';
+        if (1 === \preg_match($pattern, $identifier, $matches)) {
+            return (string)$matches[1];
+        }
+        $parts = \explode(':', $identifier);
+
+        return (string)\array_pop($parts);
+    }
+
+    private function toArray($value): array
+    {
+        return \is_array($value) ? $value : [];
     }
 }

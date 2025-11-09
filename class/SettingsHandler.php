@@ -136,8 +136,8 @@ class SettingsHandler extends \XoopsPersistableObjectHandler
         $crSettings->setLimit(1);
         $settingsAll = $this->getAll($crSettings);
         foreach (\array_keys($settingsAll) as $i) {
-            $setting['user'] = $settingsAll[$i]->getVar('set_username');
-            $setting['pwd'] = $settingsAll[$i]->getVar('set_password');
+            $setting['organization'] = $settingsAll[$i]->getVar('set_username');
+            $setting['token'] = $settingsAll[$i]->getVar('set_password');
         }
 
         return $setting;
@@ -155,8 +155,8 @@ class SettingsHandler extends \XoopsPersistableObjectHandler
         $crSettings->setLimit(1);
         $settingsAll = $this->getAll($crSettings);
         foreach (\array_keys($settingsAll) as $i) {
-            $setting['user'] = $settingsAll[$i]->getVar('set_username');
-            $setting['pwd'] = $settingsAll[$i]->getVar('set_password');
+            $setting['organization'] = $settingsAll[$i]->getVar('set_username');
+            $setting['token'] = $settingsAll[$i]->getVar('set_password');
         }
 
         return $setting;

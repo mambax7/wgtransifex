@@ -87,9 +87,9 @@ class Settings extends \XoopsObject
         $form = new \XoopsThemeForm($title, 'form', $action, 'post', true);
         $form->setExtra('enctype="multipart/form-data"');
         // Form Text setUsername
-        $form->addElement(new \XoopsFormText(\_AM_WGTRANSIFEX_SETTING_USERNAME, 'set_username', 50, 255, $this->getVar('set_username')), true);
+        $form->addElement(new \XoopsFormText(\_AM_WGTRANSIFEX_SETTING_ORGANIZATION, 'set_username', 50, 255, $this->getVar('set_username')), true);
         // Form Text setPassword
-        $form->addElement(new \XoopsFormText(\_AM_WGTRANSIFEX_SETTING_PASSWORD, 'set_password', 50, 255, $this->getVar('set_password')));
+        $form->addElement(new \XoopsFormText(\_AM_WGTRANSIFEX_SETTING_TOKEN, 'set_password', 60, 255, $this->getVar('set_password')), true);
         // Form Radio Yes/No setPrimary
         $setPrimary = $this->isNew() ? 1 : $this->getVar('set_primary');
         $form->addElement(new \XoopsFormRadioYN(\_AM_WGTRANSIFEX_SETTING_PRIMARY . '<br>' . \_AM_WGTRANSIFEX_SETTING_PRIMARY_DESC, 'set_primary', $setPrimary), true);
@@ -120,8 +120,11 @@ class Settings extends \XoopsObject
     {
         $ret = $this->getValues($keys, $format, $maxDepth);
         $ret['id'] = $this->getVar('set_id');
-        $ret['username'] = $this->getVar('set_username');
-        $ret['password'] = $this->getVar('set_password');
+        $organization = $this->getVar('set_username');
+        $ret['organization'] = $organization;
+        $ret['username'] = $organization;
+        $token = $this->getVar('set_password');
+        $ret['token_masked'] = $this->maskSecret((string)$token);
         //$ret['options']       = \strip_tags($this->getVar('set_options', 'e'));
         //$editorMaxchar        = $helper->getConfig('editor_maxchar');
         //$ret['options_short'] = $utility::truncateHtml($ret['options'], $editorMaxchar);
@@ -147,5 +150,19 @@ class Settings extends \XoopsObject
         }
 
         return $ret;
+    }
+
+    private function maskSecret(string $value): string
+    {
+        if ('' === $value) {
+            return '';
+        }
+        $length = \function_exists('mb_strlen') ? \mb_strlen($value) : \strlen($value);
+        if ($length <= 4) {
+            return \str_repeat('*', $length);
+        }
+        $suffix = \function_exists('mb_substr') ? \mb_substr($value, -4) : \substr($value, -4);
+
+        return \str_repeat('*', $length - 4) . $suffix;
     }
 }
