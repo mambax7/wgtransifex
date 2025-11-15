@@ -38,7 +38,7 @@ use XoopsModules\Wgtransifex\Common\ {
  *
  * @return bool true if ready to install, false if not
  */
-function xoops_module_pre_update_wgtransifex(\XoopsModule $module)
+function xoops_module_pre_update_wgtransifex(?\XoopsModule $module)
 {
     $utility = new Wgtransifex\Utility();
 

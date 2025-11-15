@@ -28,9 +28,9 @@ $moduleDirName      = \basename(__DIR__);
 $moduleDirNameUpper = \mb_strtoupper($moduleDirName);
 // ------------------- Informations ------------------- //
 $modversion = [
-    'version'             => '1.1.1',
-    'module_status'       => 'RC1',
-    'release_date'        => '2023/03/14', // format: yyyy/mm/dd
+    'version'             => '1.1.2',
+    'module_status'       => 'Beta1',
+    'release_date'        => '2025/11/09', // format: yyyy/mm/dd
     'name'                => \_MI_WGTRANSIFEX_NAME,
     'description'         => \_MI_WGTRANSIFEX_DESC,
     'author'              => 'Goffy (XOOPS Germany)',
@@ -46,7 +46,7 @@ $modversion = [
     'manual'              => 'link to manual file',
     'manual_file'         => \XOOPS_URL . "/modules/$moduleDirName/docs/install.txt",
     'min_php'             => '7.4',
-    'min_xoops'           => '2.5.11 RC1',
+    'min_xoops'           => '2.5.11',
     'min_admin'           => '1.2',
     'min_db'              => ['mysql' => '5.6', 'mysqli' => '5.6'],
     'image'               => 'assets/images/logoModule.png',

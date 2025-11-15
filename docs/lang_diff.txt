@@ -1,0 +1,26 @@
+LANGUAGE DIFFERENCES
+=====================
+
+Below are language differences from a version to the next version.
+
+Legend :
++ Added
+- Removed
+* Modified
+x renamed
+
+---------------------------------------
+1.1.2 Beta 1  2025-11/09
+---------------------------------------
+
+admin.php
+
+* _AM_WGTRANSIFEX_SETTING_USERNAME
+* _AM_WGTRANSIFEX_SETTING_PASSWORD
+
++ _AM_WGTRANSIFEX_SETTING_ORGANIZATION
++ _AM_WGTRANSIFEX_SETTING_TOKEN
++ _AM_WGTRANSIFEX_SETTING_TOKEN_MASKED
++ _AM_WGTRANSIFEX_SETTING_INCOMPLETE
+
+---------------------------------------
